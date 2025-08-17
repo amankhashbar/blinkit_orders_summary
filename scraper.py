@@ -121,8 +121,8 @@ async def scrape_august_orders(page):
         await my_orders_link.click()
 
         print("Waiting for the 'My Orders' page to load...")
-        # Use a locator that matches the specific structure of an order summary
-        order_card_selector = "div:has(> div > div[role='button'][tabindex='0'])"
+        # This looks for a div that acts like a button AND contains the right-arrow icon.
+        order_card_selector = "div[role='button']:has(span.icon-right-arrow)"
         await expect(page.locator(order_card_selector).first).to_be_visible(timeout=20000)
         print("'My Orders' page loaded successfully.")
 
