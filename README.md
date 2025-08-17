@@ -12,8 +12,9 @@ This README serves as both a user guide for the script and a project plan (PRD) 
 -   Handles 2FA by prompting the user to enter the OTP from their phone.
 -   Navigates to the order history page.
 -   Scrolls automatically to load all orders for a given month.
--   Scrapes order details: item name, price, and date of purchase.
--   Saves the scraped data into a clean `orders.csv` file.
+-   Navigates into each order's detail page to scrape comprehensive data.
+-   Scrapes Order ID, Order Date, Total Amount, and all individual items with their prices.
+-   Saves the scraped data into a clean, wide-format Excel file (`orders.xlsx`).
 
 ## Prerequisites
 
@@ -55,33 +56,42 @@ Before you begin, ensure you have the following installed:
 
 ## Usage
 
-1.  **Run the script from your terminal:**
-    You must provide your 10-digit Blinkit phone number using the `--phone` argument.
+The script is fully interactive. You do not need to provide any command-line arguments. Simply run the script, and it will prompt you for your phone number and OTP at the appropriate times.
 
+A browser window will open and you will see the script perform the following steps automatically:
+1.  **Handle Popups:** Close an initial "Continue on web" popup if it appears.
+2.  **Set Location:** Type "nirvana country" into the location search bar and select the correct suggestion for "Sector 50".
+3.  **Initiate Login:** Click the "Login" button on the top right of the homepage.
+
+### Running the Script & Providing Input
+
+1.  **Execute the script from your terminal:**
     ```bash
-    python scraper.py --phone YOUR_PHONE_NUMBER
+    python scraper.py
     ```
-    *(Replace `YOUR_PHONE_NUMBER` with your number.)*
 
-2.  **Follow the Browser and Enter OTP:**
-    The script will **open a new browser window** and automatically navigate to Blinkit. You will see the automation happening on your screen. It will then pause and prompt you to enter the 4-digit OTP in your terminal.
+2.  **Enter Your Phone Number:** Once the mobile number pop-up is visible in the browser, the script will prompt you in your terminal:
+    ```
+    Please enter your 10-digit mobile number:
+    ```
+
+3.  **Enter Your OTP:** After you provide your number, the script will proceed to the OTP screen and prompt you again in the terminal:
     ```
     Please enter the 4-digit OTP you received:
     ```
 
-3.  **Find your data:**
-    The script will proceed to scrape your orders from August and save them. When it's finished, you will see a success message. An `orders.csv` file will be created in the project directory with your data.
+4.  **Scraping Begins:** Once the OTP is verified, the script will take over completely, navigating to your order history, scraping all the data, and saving it to `orders.xlsx`.
 
-## Output File (`orders.csv`)
+## Output File (`orders.xlsx`)
 
-The script will generate a CSV file with the following structure:
+The script generates an Excel file where each row represents a single order. Because each order can have a different number of items, the number of columns will vary from row to row.
 
-| Date          | Item Name     | Price  |
-|---------------|---------------|--------|
-| 23 Aug, 2023  | Sliced Bread  | 45.0   |
-| 23 Aug, 2023  | Peanut Butter | 250.0  |
-| 15 Aug, 2023  | Milk          | 30.0   |
-| ...           | ...           | ...    |
+The structure is as follows:
+
+| Order ID | Order Date | Total Order Amount | Item 1                 | Item 2                  | Item 3      | ... |
+|----------|------------|--------------------|------------------------|-------------------------|-------------|-----|
+| 12345    | 15 Aug 2023| ₹550.00            | Sliced Bread (₹45.00)  | Peanut Butter (₹250.00) | Milk (₹30.00)| ... |
+| 67890    | 21 Aug 2023| ₹120.00            | Instant Noodles (₹120.00)|                         |             |     |
 
 ---
 
