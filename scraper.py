@@ -30,12 +30,20 @@ async def set_location_and_login_prep(page):
         print(f"Typing '{location_query}' into the location search bar...")
         await location_input.fill(location_query)
 
-        suggestion_locator = page.locator("div:has-text('Nirvana Country'):has-text('Sector 50')")
+        # Create a locator that targets all the suggestion containers by their shared class name
+        all_suggestions_locator = page.locator("div.LocationSearchList__LocationListContainer-sc-93rfr7-0")
 
-        print("Waiting for the correct location suggestion...")
-        await expect(suggestion_locator.first).to_be_visible(timeout=10000)
-        await suggestion_locator.first.click()
-        print("Top suggestion for 'Nirvana Country, Sector 50' was selected.")
+        print("Waiting for the location suggestions to appear...")
+        # Wait for the FIRST suggestion to become visible on the page
+        await expect(all_suggestions_locator.first).to_be_visible(timeout=10000)
+
+        print("Suggestions are visible. Pausing for 2 seconds before clicking...")
+        # Wait for 2 seconds (2000 milliseconds) as requested
+        await page.wait_for_timeout(2000)
+
+        # Click on the first suggestion in the list
+        await all_suggestions_locator.first.click()
+        print("Clicked on the first location suggestion.")
 
         print("Waiting for page to refresh and 'Login' button to appear...")
         login_button = page.locator('button:has-text("Login")')
