@@ -103,122 +103,129 @@ async def login_to_blinkit(page):
         print(f"\nINPUT ERROR: {e}")
         raise
 
-async def scrape_order_details_page(page):
+async def scrape_august_orders(page):
     """
-    On an order detail page, scrolls to load all items, then scrapes all
-    relevant data for that single order.
+    Navigates to the 'My Orders' page, scrolls through the history, and scrapes
+    the summary data for all orders placed in August using specific element locators.
     """
-    print("  Scraping order detail page...")
+    print("\n--- Starting Order Scraping Process ---")
 
-    # Scroll down the detail page to ensure all items are loaded
-    last_height = await page.evaluate("document.body.scrollHeight")
-    while True:
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(1000) # wait for content to load
-        new_height = await page.evaluate("document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
+    # --- Step 1: Navigate to 'My Orders' page ---
+    try:
+        print("Clicking on the 'Account' button...")
+        account_button_selector = 'div.nav-bar-logo-container >> div[role="button"]:has-text("Account")'
+        await page.locator(account_button_selector).click()
 
-    page_content = await page.content()
-    soup = BeautifulSoup(page_content, 'html.parser')
+        print("Clicking on 'My Orders' from the dropdown...")
+        my_orders_link = page.locator('a:has-text("My Orders")')
+        await my_orders_link.click()
 
-    # NOTE: These selectors are guesses and will likely need refinement.
-    order_id = soup.find('div', string=re.compile("Order ID")).find_next_sibling('div').get_text(strip=True)
-    order_date = soup.find('div', string=re.compile("Order Time")).find_next_sibling('div').get_text(strip=True)
-    total_amount = soup.find('div', string=re.compile("Total Amount")).find_next_sibling('div').get_text(strip=True)
+        print("Waiting for the 'My Orders' page to load...")
+        # Use a locator that matches the specific structure of an order summary
+        order_card_selector = "div:has(> div > div[role='button'][tabindex='0'])"
+        await expect(page.locator(order_card_selector).first).to_be_visible(timeout=20000)
+        print("'My Orders' page loaded successfully.")
 
-    items = []
-    item_elements = soup.find_all('div', class_=re.compile("item-details-container")) # Guessed selector
-    for item_el in item_elements:
-        name = item_el.find('p', class_=re.compile("item-name")).get_text(strip=True)
-        price = item_el.find('span', class_=re.compile("item-price")).get_text(strip=True)
-        items.append(f"{name} ({price})")
+    except TimeoutError as e:
+        print(f"CRITICAL ERROR: Could not navigate to the 'My Orders' page. Error: {e}")
+        raise
 
-    print(f"    Found {len(items)} items for Order ID {order_id}")
-
-    return {
-        "order_id": order_id,
-        "order_date": order_date,
-        "total_amount": total_amount,
-        "items": items
-    }
-
-async def scrape_orders(page):
-    """Navigates to order history and orchestrates the scraping of each order."""
-    print("\n--- Navigating to Order History ---")
-    account_button = page.locator('div.nav-bar-logo-container >> div[role="button"]:has-text("Account")')
-    await account_button.click()
-
-    my_orders_link = page.locator('a:has-text("My Orders")')
-    await my_orders_link.click()
-
-    await expect(page.locator('h1:has-text("My Orders")')).to_be_visible(timeout=20000)
-    print("Order history page loaded.")
-
-    print("Scrolling order list page to find all orders from August...")
-    last_height = await page.evaluate("document.body.scrollHeight")
-    while True:
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(2000)
-        new_height = await page.evaluate("document.body.scrollHeight")
-        page_content = await page.content()
-        if "Jul" in page_content or "Jun" in page_content or new_height == last_height:
-            print("Found previous months or reached bottom of page. Stopping scroll.")
-            break
-        last_height = new_height
-
-    print("Collecting links for all August orders...")
-    page_content = await page.content()
-    soup = BeautifulSoup(page_content, 'html.parser')
-    order_cards = soup.find_all('div', class_=re.compile("order-card-wrapper"))
-    detail_page_links = []
-    base_url = "https://blinkit.com"
-    for card in order_cards:
-        if "Aug" in card.get_text():
-            link_tag = card.find('a', href=re.compile("/orders/"))
-            if link_tag and link_tag.has_attr('href'):
-                href = link_tag['href']
-                full_url = href if href.startswith('http') else base_url + href
-                if full_url not in detail_page_links:
-                    detail_page_links.append(full_url)
-
-    print(f"Found {len(detail_page_links)} orders from August to scrape.")
-
+    # --- Step 2: Scroll and Scrape August Orders ---
     all_orders_data = []
-    for i, link in enumerate(detail_page_links):
-        print(f"Navigating to order {i+1}/{len(detail_page_links)}: {link}")
-        await page.goto(link, timeout=60000)
-        await expect(page.locator('div:has-text("Order ID")')).to_be_visible(timeout=15000)
+    # Use the full text of an order card as a unique identifier to avoid duplicates
+    processed_orders = set()
+    stop_scraping = False
 
-        order_data = await scrape_order_details_page(page)
-        all_orders_data.append(order_data)
+    print("\nStarting to scroll and scrape orders using specific locators...")
+    while not stop_scraping:
+        # Find all currently visible order cards based on the provided structure
+        order_cards = await page.locator(order_card_selector).all()
+
+        if not order_cards:
+            print("No more order cards found on the page.")
+            break
+
+        new_orders_found = False
+        for card in order_cards:
+            # Use a combination of elements to create a unique key for the order
+            try:
+                # Target the div containing amount and date
+                details_container = card.locator("div.tw-flex.tw-gap-1")
+                unique_card_key = await details_container.inner_text()
+            except TimeoutError:
+                # If the card doesn't have the expected structure, skip it
+                continue
+
+            if unique_card_key in processed_orders:
+                continue  # Skip if we've already processed this exact card
+
+            new_orders_found = True
+            processed_orders.add(unique_card_key)
+
+            # Locate the specific element for the date
+            date_element = card.locator("div.tw-flex.tw-gap-1 > div:nth-child(3)")
+            order_date_str = await date_element.inner_text()
+
+            if "Aug" in order_date_str:
+                # It's an August order, so extract all details
+
+                # Extract Delivery Time
+                delivery_element = card.locator("div.tw-text-500.tw-font-extrabold")
+                delivery_text = await delivery_element.inner_text()
+                delivery_match = re.search(r"(\d+)", delivery_text)
+                delivery_time = delivery_match.group(1) if delivery_match else "N/A"
+
+                # Extract Total Amount
+                amount_element = card.locator("div.tw-flex.tw-gap-1 > div:nth-child(1)")
+                total_amount = await amount_element.inner_text()
+
+                print(f"  [+] Scraped August Order: Date='{order_date_str}', Amount='{total_amount}', Delivery='{delivery_time} mins'")
+
+                all_orders_data.append({
+                    "order_date_time": order_date_str,
+                    "total_amount": total_amount,
+                    "delivery_time_minutes": delivery_time,
+                })
+            else:
+                # If we encounter a non-August month, we can stop
+                print(f"\nFound an order from a different month ('{order_date_str}'). Stopping the scraping process.")
+                stop_scraping = True
+                break
+
+        if stop_scraping:
+            break
+
+        if not new_orders_found and len(order_cards) > 0:
+            print("\nScrolled to the end of the order history. No new orders loaded.")
+            break
+
+        # Scroll down to load more orders
+        print("Scrolling down for more orders...")
+        await page.mouse.wheel(0, 10000)
+        # Give the page a moment to load new content
+        await page.wait_for_timeout(3000)
 
     return all_orders_data
 
 def export_to_excel(orders_data):
     """
-    Transforms the scraped data into a wide-format DataFrame and saves it
-    as an Excel file.
+    Saves the scraped summary data to an Excel file.
     """
     if not orders_data:
         print("\nNo data was scraped to export.")
         return
 
     print("\n--- Processing data for Excel export ---")
-    processed_rows = []
 
-    for order in orders_data:
-        row = {
-            'Order ID': order.get('order_id'),
-            'Order Date': order.get('order_date'),
-            'Total Order Amount': order.get('total_amount')
-        }
-        for i, item in enumerate(order.get('items', [])):
-            row[f'Item {i+1}'] = item
-        processed_rows.append(row)
+    # The data is already in the correct format for a DataFrame
+    df = pd.DataFrame(orders_data)
 
-    df = pd.DataFrame(processed_rows)
+    # Rename columns for clarity in the final output
+    df.rename(columns={
+        'order_date_time': 'Order Date & Time',
+        'total_amount': 'Total Amount',
+        'delivery_time_minutes': 'Delivery Time (Minutes)'
+    }, inplace=True)
 
     output_filename = "orders.xlsx"
     try:
@@ -243,7 +250,7 @@ async def main():
             await login_to_blinkit(page)
 
             # Step 3: Scrape the order data
-            all_orders_data = await scrape_orders(page)
+            all_orders_data = await scrape_august_orders(page)
 
             # Step 4: Export the data to Excel
             export_to_excel(all_orders_data)
