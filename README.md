@@ -64,10 +64,11 @@ Before you begin, ensure you have the following installed:
     *(Replace `YOUR_PHONE_NUMBER` with your number.)*
 
 2.  **Enter the OTP:**
-    The script will open a browser, navigate to Blinkit, and enter your phone number. It will then pause and prompt you to enter the 4-digit OTP sent to your phone.
+    The script will run a browser **in the background** (headless mode), navigate to Blinkit, and enter your phone number. No browser window will appear on your screen. It will then pause and prompt you to enter the 4-digit OTP in your terminal.
     ```
     Please enter the 4-digit OTP you received:
     ```
+    *(Note for developers: If you need to debug the script and see the browser window, you can change `headless=True` to `headless=False` in the `scraper.py` file.)*
 
 3.  **Find your data:**
     The script will proceed to scrape your orders from August and save them. When it's finished, you will see a success message. An `orders.csv` file will be created in the project directory with your data.
