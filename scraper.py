@@ -5,58 +5,82 @@ import pandas as pd
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-def scrape_data_from_html(page_content):
-    """Parses the HTML of the order history page and extracts order details for August."""
-    print("\n--- Starting Data Scraping ---")
+def scrape_order_details_page(page: sync_playwright.sync_api.Page):
+    """
+    On an order detail page, scrolls to load all items, then scrapes all
+    relevant data for that single order.
+    """
+    print("  Scraping order detail page...")
+
+    # Scroll down the detail page to ensure all items are loaded
+    last_height = page.evaluate("document.body.scrollHeight")
+    while True:
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        time.sleep(1)
+        new_height = page.evaluate("document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+    page_content = page.content()
     soup = BeautifulSoup(page_content, 'html.parser')
 
-    # These selectors are educated guesses based on common web structures.
-    # They might need adjustment if Blinkit's website structure is different.
-    order_card_selector = "order-card-wrapper"
-    date_selector = "order-date-formated"
-    item_container_selector = "order-item"
-    item_name_selector = "product-title"
-    item_price_selector = "price"
+    # --- Scrape data from the detail page ---
+    # NOTE: These selectors are guesses and will likely need refinement.
+    order_id = soup.find('div', class_=re.compile("order-id")).get_text(strip=True).replace("Order ID: ", "")
+    order_date = soup.find('div', class_=re.compile("order-date")).get_text(strip=True)
+    total_amount = soup.find('div', class_=re.compile("total-amount")).get_text(strip=True)
 
-    all_orders_data = []
+    items = []
+    item_elements = soup.find_all('div', class_=re.compile("item-row"))
+    for item_el in item_elements:
+        name = item_el.find('p', class_=re.compile("item-name")).get_text(strip=True)
+        price = item_el.find('span', class_=re.compile("item-price")).get_text(strip=True)
+        items.append(f"{name} ({price})")
 
-    order_cards = soup.find_all('div', class_=re.compile(order_card_selector))
-    print(f"Found {len(order_cards)} potential order cards on the page.")
+    print(f"    Found {len(items)} items for Order ID {order_id}")
 
-    for card in order_cards:
-        date_element = card.find('div', class_=re.compile(date_selector))
-        if not date_element:
-            continue
+    return {
+        "order_id": order_id,
+        "order_date": order_date,
+        "total_amount": total_amount,
+        "items": items
+    }
 
-        order_date_text = date_element.get_text(strip=True)
+def export_to_excel(orders_data):
+    """
+    Transforms the scraped data into a wide-format DataFrame and saves it
+    as an Excel file.
+    """
+    if not orders_data:
+        print("No data to export.")
+        return
 
-        if "Aug" not in order_date_text:
-            continue
+    print("Processing data for Excel export...")
+    processed_rows = []
 
-        cleaned_date = order_date_text.replace("Ordered on ", "")
+    for order in orders_data:
+        row = {
+            'Order ID': order.get('order_id'),
+            'Order Date': order.get('order_date'),
+            'Total Order Amount': order.get('total_amount')
+        }
+        # Add item columns dynamically
+        for i, item in enumerate(order.get('items', [])):
+            row[f'Item {i+1}'] = item
+        processed_rows.append(row)
 
-        item_containers = card.find_all('div', class_=re.compile(item_container_selector))
-        if not item_containers:
-            continue
+    # Create DataFrame from the list of processed rows
+    df = pd.DataFrame(processed_rows)
 
-        print(f"Processing an order from {cleaned_date} with {len(item_containers)} items...")
-        for item in item_containers:
-            name_element = item.find('p', class_=re.compile(item_name_selector))
-            item_name = name_element.get_text(strip=True) if name_element else "N/A"
+    # Save to Excel
+    output_filename = "orders.xlsx"
+    try:
+        df.to_excel(output_filename, index=False, engine='openpyxl')
+        print(f"\n✅ Success! Data for {len(df)} orders saved to '{output_filename}'")
+    except Exception as e:
+        print(f"\n❌ Failed to save Excel file. Error: {e}")
 
-            price_element = item.find('span', class_=re.compile(item_price_selector))
-            if price_element:
-                item_price = re.sub(r'[^\d.]', '', price_element.get_text(strip=True))
-            else:
-                item_price = "0.00"
-
-            all_orders_data.append({
-                "Date": cleaned_date,
-                "Item Name": item_name,
-                "Price": float(item_price) if item_price else 0.0
-            })
-
-    return all_orders_data
 
 def main():
     parser = argparse.ArgumentParser(description="Scrape Blinkit order data for August.")
@@ -64,32 +88,35 @@ def main():
     args = parser.parse_args()
 
     with sync_playwright() as p:
-        # Running in headful mode to avoid bot detection.
-        # slow_mo adds a small delay to each action to seem more human.
         browser = p.chromium.launch(headless=False, slow_mo=50)
         page = browser.new_page()
 
         try:
+            # ... (Location and Login logic remains the same) ...
             print("Navigating to Blinkit...")
             page.goto("https://blinkit.com/", timeout=60000)
 
-            # Handle location prompt if it appears
+            print("Looking for the location search pop-up...")
             location_input_selector = 'input[placeholder*="Search for your location"]'
             try:
-                page.wait_for_selector(location_input_selector, timeout=5000)
-                print("Location prompt found. Setting a default location...")
-                page.fill(location_input_selector, "Gurugram")
-                first_option_selector = 'div[class*="location-suggestions"]'
-                page.wait_for_selector(first_option_selector, timeout=5000)
-                page.locator(first_option_selector).first.click()
-                print("Location set.")
-            except Exception:
-                print("Location prompt not found, continuing...")
+                page.wait_for_selector(location_input_selector, timeout=20000)
+                location_query = "nirvana country sector 50"
+                print(f"Location prompt found. Typing: '{location_query}'")
+                page.fill(location_input_selector, location_query)
+                time.sleep(2)
+                suggestion_selector = 'div[role="button"]:has-text("Nirvana Country")'
+                print(f"Looking for suggestion with selector: {suggestion_selector}")
+                page.wait_for_selector(suggestion_selector, timeout=10000)
+                page.locator(suggestion_selector).first.click()
+                print("Location selected.")
+                print("Waiting for main page to load after setting location...")
+                page.wait_for_load_state("networkidle", timeout=15000)
+                print("Main page loaded.")
+            except Exception as e:
+                print(f"Critical error: Could not handle the location prompt. The script cannot continue. Error: {e}")
+                raise
 
-            # --- Login Flow ---
             print("Starting login process...")
-            # Using a more robust selector for the login button.
-            # This looks for a button element specifically, which is less brittle.
             login_button_selector = 'button:has-text("Login")'
             page.wait_for_selector(login_button_selector, timeout=30000)
             page.locator(login_button_selector).click()
@@ -103,51 +130,71 @@ def main():
             otp = input("Please enter the 4-digit OTP you received: ")
             if len(otp) != 4 or not otp.isdigit():
                 raise ValueError("Invalid OTP. It must be 4 digits.")
-
             page.locator('input[type="tel"]').nth(1).fill(otp)
 
             profile_icon_selector = 'div[data-test-id="user-profile"]'
             page.wait_for_selector(profile_icon_selector, timeout=30000)
             print("Login successful!")
 
-            # --- Navigation to Order History ---
+            try:
+                skip_button_selector = 'button:is(:text-is("Not Now"), :text-is("Skip for now"))'
+                print("Checking for 'Open in App' popup...")
+                page.wait_for_selector(skip_button_selector, timeout=5000)
+                page.click(skip_button_selector)
+                print("'Open in App' popup was found and skipped.")
+            except Exception:
+                print("'Open in App' popup not found, continuing...")
+
             print("Navigating to order history...")
             page.click(profile_icon_selector)
             page.locator('a:has-text("My Orders")').click()
             page.wait_for_selector('h1:has-text("My Orders")', timeout=30000)
             print("Order history page loaded.")
 
-            # --- Scrolling to Load Data ---
-            print("Scrolling to find all orders from August...")
+            # --- Scroll Order List Page to Load All August Orders ---
+            print("Scrolling order list page to find all orders from August...")
             last_height = page.evaluate("document.body.scrollHeight")
             while True:
-                page.wait_for_selector('div[class*="order-card-wrapper"]', timeout=15000)
-                all_cards_text = page.locator('div[class*="order-card-wrapper"]').all_text_contents()
-                if all_cards_text and re.search(r'(Jul|Jun|May)', all_cards_text[-1]):
-                    print("Found orders from a previous month. Stopping scroll.")
-                    break
-
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(2) # Wait for page to load new content
-
+                time.sleep(2)
                 new_height = page.evaluate("document.body.scrollHeight")
-                if new_height == last_height:
-                    print("Reached the bottom of the page.")
+                page_content = page.content()
+                if "Jul" in page_content or "Jun" in page_content or new_height == last_height:
+                    print("Found previous months or reached bottom of page. Stopping scroll.")
                     break
                 last_height = new_height
 
-            # --- Scraping and Saving ---
+            # --- Get Links for All August Orders ---
+            print("Collecting links for all August orders...")
             page_content = page.content()
-            scraped_data = scrape_data_from_html(page_content)
+            soup = BeautifulSoup(page_content, 'html.parser')
+            order_cards = soup.find_all('div', class_=re.compile("order-card-wrapper"))
+            detail_page_links = []
+            base_url = "https://blinkit.com"
+            for card in order_cards:
+                if "Aug" in card.get_text():
+                    # NOTE: This selector for the link is a guess.
+                    link_tag = card.find('a', href=re.compile("/orders/"))
+                    if link_tag and link_tag.has_attr('href'):
+                        href = link_tag['href']
+                        full_url = href if href.startswith('http') else base_url + href
+                        detail_page_links.append(full_url)
 
-            if scraped_data:
-                df = pd.DataFrame(scraped_data)
-                output_filename = "orders.csv"
-                df.to_csv(output_filename, index=False)
-                print(f"\n✅ Success! Scraped {len(df)} items.")
-                print(f"Data saved to '{output_filename}'")
-            else:
-                print("\nNo data was found for August.")
+            print(f"Found {len(detail_page_links)} orders from August to scrape.")
+
+            # --- Loop Through Detail Pages and Scrape Data ---
+            all_orders_data = []
+            for i, link in enumerate(detail_page_links):
+                print(f"Navigating to order {i+1}/{len(detail_page_links)}: {link}")
+                page.goto(link, timeout=60000)
+                # Wait for a unique element on the detail page before scraping
+                page.wait_for_selector('div:has-text("Order ID")', timeout=15000)
+
+                order_data = scrape_order_details_page(page)
+                all_orders_data.append(order_data)
+
+            # --- Process and Save Data to Excel ---
+            export_to_excel(all_orders_data)
 
         except Exception as e:
             print(f"\n❌ An error occurred: {e}")
