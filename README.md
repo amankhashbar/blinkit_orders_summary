@@ -12,9 +12,8 @@ This README serves as both a user guide for the script and a project plan (PRD) 
 -   Handles 2FA by prompting the user to enter the OTP from their phone.
 -   Navigates to the order history page.
 -   Scrolls automatically to load all orders for a given month.
--   Navigates into each order's detail page to scrape comprehensive data.
--   Scrapes Order ID, Order Date, Total Amount, and all individual items with their prices.
--   Saves the scraped data into a clean, wide-format Excel file (`orders.xlsx`).
+-   Scrapes summary data for each order (Date/Time, Total Amount, Delivery Time) directly from the order list page.
+-   Saves the scraped data into a simple and clean Excel file (`orders.xlsx`).
 
 ## Prerequisites
 
@@ -84,14 +83,13 @@ A browser window will open and you will see the script perform the following ste
 
 ## Output File (`orders.xlsx`)
 
-The script generates an Excel file where each row represents a single order. Because each order can have a different number of items, the number of columns will vary from row to row.
+The script generates a simple Excel file with one row for each order placed in August. The structure is as follows:
 
-The structure is as follows:
-
-| Order ID | Order Date | Total Order Amount | Item 1                 | Item 2                  | Item 3      | ... |
-|----------|------------|--------------------|------------------------|-------------------------|-------------|-----|
-| 12345    | 15 Aug 2023| ₹550.00            | Sliced Bread (₹45.00)  | Peanut Butter (₹250.00) | Milk (₹30.00)| ... |
-| 67890    | 21 Aug 2023| ₹120.00            | Instant Noodles (₹120.00)|                         |             |     |
+| Order Date & Time | Total Amount | Delivery Time (Minutes) |
+|-------------------|--------------|-------------------------|
+| 15 Aug, 10:30 PM  | ₹550.75      | 8                       |
+| 21 Aug, 08:15 AM  | ₹120.00      | 12                      |
+| ...               | ...          | ...                     |
 
 ---
 
