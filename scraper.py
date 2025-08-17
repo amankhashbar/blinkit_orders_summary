@@ -20,7 +20,8 @@ async def set_location_and_login_prep(page):
     # --- Part 2: Handle the REQUIRED "Set Location" Workflow ---
     print("\nStarting the location setting process...")
     try:
-        location_input = page.locator('input[placeholder*="Search delivery location"]')
+        # Using exact, case-sensitive match for the placeholder text
+        location_input = page.locator('input[placeholder="search delivery location"]')
         await expect(location_input).to_be_visible(timeout=20000)
         print("Location input box found.")
 
