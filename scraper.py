@@ -64,8 +64,9 @@ def main():
     args = parser.parse_args()
 
     with sync_playwright() as p:
-        # Final version runs in headless mode
-        browser = p.chromium.launch(headless=True)
+        # Running in headful mode to avoid bot detection.
+        # slow_mo adds a small delay to each action to seem more human.
+        browser = p.chromium.launch(headless=False, slow_mo=50)
         page = browser.new_page()
 
         try:
