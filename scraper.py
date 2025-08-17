@@ -87,7 +87,11 @@ def main():
 
             # --- Login Flow ---
             print("Starting login process...")
-            page.locator('div:has-text("Login")').nth(1).click()
+            # Using a more robust selector for the login button.
+            # This looks for a button element specifically, which is less brittle.
+            login_button_selector = 'button:has-text("Login")'
+            page.wait_for_selector(login_button_selector, timeout=30000)
+            page.locator(login_button_selector).click()
 
             phone_input_selector = 'input[type="tel"]'
             page.wait_for_selector(phone_input_selector, timeout=15000)
