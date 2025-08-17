@@ -56,33 +56,31 @@ Before you begin, ensure you have the following installed:
 
 ## Usage
 
-The script automates the entire process of logging in and navigating the Blinkit website. Here is a step-by-step breakdown of what the script will do automatically in the browser window that opens:
+The script is fully interactive. You do not need to provide any command-line arguments. Simply run the script, and it will prompt you for your phone number and OTP at the appropriate times.
 
-1.  **Set Location:** The script will first handle the location pop-up. It will automatically type "nirvana country in sector 50" into the search bar and select the first suggestion.
-2.  **Initiate Login:** It will then find the "Login" button on the top right of the homepage and click it.
-3.  **Enter Phone Number:** It will enter the phone number you provide via the command line.
-4.  **Handle Popups:** It will automatically close any "Open in App" popups that might appear after login.
+A browser window will open and you will see the script perform the following steps automatically:
+1.  **Handle Popups:** Close an initial "Continue on web" popup if it appears.
+2.  **Set Location:** Type "nirvana country" into the location search bar and select the correct suggestion for "Sector 50".
+3.  **Initiate Login:** Click the "Login" button on the top right of the homepage.
 
-Your only manual step is to provide the OTP when prompted in your terminal.
+### Running the Script & Providing Input
 
-### Running the Script
-
-1.  **Execute from your terminal:**
-    You must provide your 10-digit Blinkit phone number using the `--phone` argument.
+1.  **Execute the script from your terminal:**
     ```bash
-    python scraper.py --phone YOUR_PHONE_NUMBER
+    python scraper.py
     ```
-    *(Replace `YOUR_PHONE_NUMBER` with your number.)*
 
-2.  **Enter the OTP:**
-    A browser window will open and perform the steps above. When it reaches the OTP screen, your terminal will prompt you:
+2.  **Enter Your Phone Number:** Once the mobile number pop-up is visible in the browser, the script will prompt you in your terminal:
+    ```
+    Please enter your 10-digit mobile number:
+    ```
+
+3.  **Enter Your OTP:** After you provide your number, the script will proceed to the OTP screen and prompt you again in the terminal:
     ```
     Please enter the 4-digit OTP you received:
     ```
-    Enter the OTP and press Enter.
 
-3.  **Find your data:**
-    The script will complete the login, navigate to your order history, scrape the data, and save it to `orders.xlsx`.
+4.  **Scraping Begins:** Once the OTP is verified, the script will take over completely, navigating to your order history, scraping all the data, and saving it to `orders.xlsx`.
 
 ## Output File (`orders.xlsx`)
 
