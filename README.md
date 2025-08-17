@@ -63,12 +63,11 @@ Before you begin, ensure you have the following installed:
     ```
     *(Replace `YOUR_PHONE_NUMBER` with your number.)*
 
-2.  **Enter the OTP:**
-    The script will run a browser **in the background** (headless mode), navigate to Blinkit, and enter your phone number. No browser window will appear on your screen. It will then pause and prompt you to enter the 4-digit OTP in your terminal.
+2.  **Follow the Browser and Enter OTP:**
+    The script will **open a new browser window** and automatically navigate to Blinkit. You will see the automation happening on your screen. It will then pause and prompt you to enter the 4-digit OTP in your terminal.
     ```
     Please enter the 4-digit OTP you received:
     ```
-    *(Note for developers: If you need to debug the script and see the browser window, you can change `headless=True` to `headless=False` in the `scraper.py` file.)*
 
 3.  **Find your data:**
     The script will proceed to scrape your orders from August and save them. When it's finished, you will see a success message. An `orders.csv` file will be created in the project directory with your data.
@@ -85,6 +84,16 @@ The script will generate a CSV file with the following structure:
 | ...           | ...           | ...    |
 
 ---
+
+## Troubleshooting
+
+### Cloudflare Block: "The page you are trying to access has blocked you"
+
+Some websites, including Blinkit, use security services like Cloudflare to prevent automated scraping. If you run the script and get an error page that mentions you are "blocked," it's because the website has detected the automation.
+
+To avoid this, the script is configured to run in "headful" mode (`headless=False`), which means it opens a visible browser window and performs actions at a slightly slower, more human-like pace. This makes the script much less likely to be detected as a bot.
+
+If you still encounter issues, it's possible the site has updated its security measures further.
 
 ## Project Development Plan (PRD)
 
