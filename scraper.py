@@ -337,12 +337,10 @@ async def main():
     """
     The main function that orchestrates the entire scraping workflow.
 
-    It handles session management (loading a saved state or performing a new login),
-    gathers user input, calls the scraping function, and exports the results.
+    It uses a state-driven approach to determine whether to log in or proceed
+    directly to scraping, making it resilient to expired sessions.
     """
     AUTH_FILE = "auth.json"
-
-    # Allow the user to force a new login by passing the --relogin flag.
     if '--relogin' in sys.argv:
         print("LOG: '--relogin' flag detected. Forcing a new login.")
         if os.path.exists(AUTH_FILE):
@@ -362,34 +360,44 @@ async def main():
             print("\n--- Starting Blinkit Scraper ---")
             await page.goto("https://blinkit.com/", timeout=60000)
 
-            # This logic block determines whether to use a saved session or perform a new login.
-            if os.path.exists(AUTH_FILE):
-                # If an auth file exists, verify the session is still active by checking
-                # for an element that only appears when logged in (the "Account" button).
-                print(f"LOG: Found '{AUTH_FILE}'. Verifying session is active...")
-                try:
-                    await expect(page.get_by_text("Account", exact=True)).to_be_visible(timeout=10000)
-                    print("LOG: Session is valid. Already logged in.")
-                except TimeoutError:
-                    # If the session is expired, inform the user and stop the script.
-                    print(f"❌ CRITICAL: Saved session in '{AUTH_FILE}' has expired or is invalid.")
-                    await context.close()
+
+            print("\nLOG: Determining current login state...")
+            # This state-driven logic is more resilient than just checking for a file.
+            # It reacts to what is actually visible on the page.
+
+            # STATE 1: We are already fully logged in.
+            if await page.get_by_text("Account", exact=True).is_visible():
+                print("LOG: State detected: Fully logged in ('Account' button is visible).")
+                print("LOG: Proceeding directly to scraping.")
+
+            # STATE 2: Logged out, but location is already set.
+            elif await page.get_by_text("Login", exact=True).is_visible():
+                print("LOG: State detected: Logged out, but location is set ('Login' button is visible).")
+                if os.path.exists(AUTH_FILE):
                     os.remove(AUTH_FILE)
-                    print("LOG: Removed invalid auth file. Please run the script again to log in manually.")
-                    return
-            else:
-                # If no auth file exists, this is a first-time run.
-                # Perform the full setup and login process.
-                print("LOG: No session file found. Starting first-time setup and login...")
-                await set_location_and_login_prep(page)
+                    print(f"LOG: Removed outdated session file: '{AUTH_FILE}'")
+
                 await login_to_blinkit(page)
 
-                # After a successful login, save the session state to the auth file.
-                print(f"LOG: Login successful! Saving session to '{AUTH_FILE}' for future runs...")
+                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
                 await context.storage_state(path=AUTH_FILE)
                 print("LOG: Session saved.")
 
-            # At this point, the script is guaranteed to be on a logged-in page.
+            # STATE 3: First-time run or cookies fully cleared.
+            else:
+                print("LOG: State detected: No location set.")
+                if os.path.exists(AUTH_FILE):
+                    os.remove(AUTH_FILE)
+
+                await set_location_and_login_prep(page)
+                await login_to_blinkit(page)
+
+                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
+                await context.storage_state(path=AUTH_FILE)
+                print("LOG: Session saved.")
+
+            # By this point, the script is guaranteed to be in a logged-in state.
+
             all_orders_data = await scrape_orders_since(page, start_date)
 
             if all_orders_data:
