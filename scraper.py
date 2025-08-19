@@ -79,10 +79,8 @@ async def set_location_and_login_prep(page: Page):
 
 async def login_to_blinkit(page: Page):
     """
-    Handles the interactive login process, including entering the phone number and OTP.
-
-    Args:
-        page (Page): The Playwright page object where the 'Login' button is visible.
+    Handles the interactive login process, including entering the phone number and OTP,
+    with a retry mechanism for resending the OTP.
     """
     try:
         print("\n--- Starting Login Process ---")
@@ -105,39 +103,78 @@ async def login_to_blinkit(page: Page):
         await page.locator('button:has-text("Continue")').click()
         print("LOG: Continue button clicked.")
 
-        # Wait for the OTP screen to appear.
-        await expect(page.locator('text="OTP Verification"')).to_be_visible(timeout=10000)
-        print("LOG: OTP Verification pop-up is visible.")
+        # --- START: Modified OTP logic with resend functionality ---
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            print(f"\n--- OTP Attempt {attempt}/{max_attempts} ---")
+            await expect(page.locator('text="OTP Verification"')).to_be_visible(timeout=10000)
+            print("LOG: OTP Verification pop-up is visible.")
 
-        otp = input("👉 Please enter the 4-digit OTP you received: ")
-        if len(otp) != 4 or not otp.isdigit():
-            raise ValueError("Invalid OTP. It must be 4 digits.")
+            otp = input("👉 Please enter the 4-digit OTP you received: ")
+            if len(otp) != 4 or not otp.isdigit():
+                print("❌ Invalid OTP format. The attempt will likely fail.")
+                # Allow the script to proceed and fail, so the user is prompted to resend.
 
-        # This website uses input fields that automatically advance focus after each
-        # digit is typed. To handle this, we simulate individual key presses rather
-        # than using a single `.fill()` command.
-        first_otp_input = page.locator('[data-test-id="otp-text-box"]').first
-        await first_otp_input.click() # Focus the first box
-        print(f"LOG: Entering OTP '{otp}' digit by digit...")
-        for digit in otp:
-            await page.keyboard.press(digit)
-            await page.wait_for_timeout(100) # A small delay can improve reliability.
-        print("LOG: Full OTP has been entered.")
+            # This website uses input fields that automatically advance focus after each
+            # digit is typed. We simulate individual key presses.
+            first_otp_input = page.locator('[data-test-id="otp-text-box"]').first
+            await first_otp_input.click() # Focus the first box
 
-        # The most reliable indicator of a successful login is the appearance of the
-        # "Account" button in the navigation bar.
-        print("LOG: Waiting for final login confirmation...")
-        account_button = page.get_by_text("Account", exact=True)
-        await expect(account_button).to_be_visible(timeout=20000)
+            # On retries, clear any previously entered incorrect OTP
+            if attempt > 1:
+                # This simulates Ctrl+A (or Cmd+A on Mac) and Backspace to clear the field
+                select_all = "Meta+A" if sys.platform == "darwin" else "Control+A"
+                await page.keyboard.press(select_all)
+                await page.keyboard.press("Backspace")
 
-        print("\n✅ LOGIN SUCCESSFUL!")
-        print("   The 'Account' button is visible. We are ready to start scraping!")
+            print(f"LOG: Entering OTP '{otp}' digit by digit...")
+            for digit in otp:
+                await page.keyboard.press(digit)
+                await page.wait_for_timeout(100) # A small delay can improve reliability.
+            print("LOG: Full OTP has been entered.")
+
+            # Check for login success by looking for the 'Account' button.
+            try:
+                print("LOG: Waiting for final login confirmation...")
+                account_button = page.get_by_text("Account", exact=True)
+                await expect(account_button).to_be_visible(timeout=15000)
+
+                print("\n✅ LOGIN SUCCESSFUL!")
+                print("   The 'Account' button is visible. We are ready to start scraping!")
+                return  # Successfully logged in, exit the function.
+
+            except TimeoutError:
+                print("\nLOG: Login did not complete successfully. OTP may be incorrect or expired.")
+                if attempt < max_attempts:
+                    try:
+                        # Check if the "Resend Code" button is visible
+                        resend_button = page.get_by_text("Resend Code", exact=True)
+                        await expect(resend_button).to_be_visible(timeout=5000)
+
+                        user_choice = input("👉 Would you like to resend the OTP? (y/n): ").lower()
+                        if user_choice == 'y':
+                            await resend_button.click()
+                            print("LOG: 'Resend Code' clicked. A new OTP will be sent.")
+                            continue # Continue to the next iteration of the loop
+                        else:
+                            raise Exception("User aborted the login process.")
+                    except TimeoutError:
+                        raise Exception("Login failed and the 'Resend Code' button was not found. Cannot proceed.")
+                else:
+                    print("\n❌ Maximum OTP attempts reached.")
+
+        raise Exception("Failed to log in after multiple OTP attempts.")
+        # --- END: Modified OTP logic ---
 
     except TimeoutError as e:
         print(f"\nCRITICAL ERROR: A timeout occurred during the login process. Error: {e}")
         raise
     except ValueError as e:
         print(f"\nINPUT ERROR: {e}")
+        raise
+    except Exception as e:
+        # Catch exceptions raised from within the OTP loop (e.g., user abort)
+        print(f"\n❌ An error occurred during login: {e}")
         raise
 
 # ==============================================================================
@@ -351,8 +388,6 @@ async def main():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=50)
-        # Load the saved session state (cookies, local storage) if it exists.
-        # This allows the script to start from a logged-in state on subsequent runs.
         context = await browser.new_context(storage_state=AUTH_FILE if os.path.exists(AUTH_FILE) else None)
         page = await context.new_page()
 
@@ -360,34 +395,19 @@ async def main():
             print("\n--- Starting Blinkit Scraper ---")
             await page.goto("https://blinkit.com/", timeout=60000)
 
+            print("\nLOG: Determining current page state...")
+            # --- REVISED LOGIC ---
+            # The most reliable way to determine the initial state is to check for the
+            # location input box first. Its presence means we must handle location
+            # setting before doing anything else.
 
-            print("\nLOG: Determining current login state...")
-            # This state-driven logic is more resilient than just checking for a file.
-            # It reacts to what is actually visible on the page.
+            location_input = page.locator('input[placeholder="search delivery location"]')
 
-            # STATE 1: We are already fully logged in.
-            if await page.get_by_text("Account", exact=True).is_visible():
-                print("LOG: State detected: Fully logged in ('Account' button is visible).")
-                print("LOG: Proceeding directly to scraping.")
-
-            # STATE 2: Logged out, but location is already set.
-            elif await page.get_by_text("Login", exact=True).is_visible():
-                print("LOG: State detected: Logged out, but location is set ('Login' button is visible).")
+            # STATE 1: First-time run or location needs to be set.
+            if await location_input.is_visible(timeout=10000):
+                print("LOG: State detected: Location needs to be set.")
                 if os.path.exists(AUTH_FILE):
-                    os.remove(AUTH_FILE)
-                    print(f"LOG: Removed outdated session file: '{AUTH_FILE}'")
-
-                await login_to_blinkit(page)
-
-                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
-                await context.storage_state(path=AUTH_FILE)
-                print("LOG: Session saved.")
-
-            # STATE 3: First-time run or cookies fully cleared.
-            else:
-                print("LOG: State detected: No location set.")
-                if os.path.exists(AUTH_FILE):
-                    os.remove(AUTH_FILE)
+                    os.remove(AUTH_FILE) # Remove old auth if we're forced to set location.
 
                 await set_location_and_login_prep(page)
                 await login_to_blinkit(page)
@@ -396,8 +416,21 @@ async def main():
                 await context.storage_state(path=AUTH_FILE)
                 print("LOG: Session saved.")
 
-            # By this point, the script is guaranteed to be in a logged-in state.
+            # STATE 2: Location is set, but we are logged out.
+            elif await page.get_by_text("Login", exact=True).is_visible():
+                print("LOG: State detected: Location is set, but user is logged out.")
+                await login_to_blinkit(page)
 
+                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
+                await context.storage_state(path=AUTH_FILE)
+                print("LOG: Session saved.")
+
+            # STATE 3: Already fully logged in.
+            elif await page.get_by_text("Account", exact=True).is_visible():
+                print("LOG: State detected: Fully logged in ('Account' button is visible).")
+                print("LOG: Proceeding directly to scraping.")
+
+            # By this point, the script is guaranteed to be in a logged-in state.
             all_orders_data = await scrape_orders_since(page, start_date)
 
             if all_orders_data:
@@ -414,6 +447,7 @@ async def main():
         finally:
             print("\n--- Workflow Complete. Closing browser. ---")
             await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
