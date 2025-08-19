@@ -336,11 +336,11 @@ def export_to_excel(orders_data: list[dict]):
 async def main():
     """
     The main function that orchestrates the entire scraping workflow.
+
     It uses a state-driven approach to determine whether to log in or proceed
     directly to scraping, making it resilient to expired sessions.
     """
     AUTH_FILE = "auth.json"
-
     if '--relogin' in sys.argv:
         print("LOG: '--relogin' flag detected. Forcing a new login.")
         if os.path.exists(AUTH_FILE):
@@ -359,6 +359,7 @@ async def main():
         try:
             print("\n--- Starting Blinkit Scraper ---")
             await page.goto("https://blinkit.com/", timeout=60000)
+
 
             print("\nLOG: Determining current login state...")
             # This state-driven logic is more resilient than just checking for a file.
@@ -396,6 +397,7 @@ async def main():
                 print("LOG: Session saved.")
 
             # By this point, the script is guaranteed to be in a logged-in state.
+
             all_orders_data = await scrape_orders_since(page, start_date)
 
             if all_orders_data:
@@ -412,7 +414,6 @@ async def main():
         finally:
             print("\n--- Workflow Complete. Closing browser. ---")
             await browser.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
