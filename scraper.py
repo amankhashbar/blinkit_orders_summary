@@ -351,6 +351,8 @@ async def main():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=50)
+        # Load the saved session state (cookies, local storage) if it exists.
+        # This allows the script to start from a logged-in state on subsequent runs.
         context = await browser.new_context(storage_state=AUTH_FILE if os.path.exists(AUTH_FILE) else None)
         page = await context.new_page()
 
@@ -410,6 +412,7 @@ async def main():
         finally:
             print("\n--- Workflow Complete. Closing browser. ---")
             await browser.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
