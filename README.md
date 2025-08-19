@@ -2,31 +2,28 @@
 
 ## Overview
 
-This project contains a Python script that automates the process of scraping your order history from [Blinkit](https://blinkit.com). The script uses browser automation to log into your account, navigate to your past orders, filter them by a specific month (e.g., August), and extract details like item name, price, and date into a structured CSV file.
+This project contains a professional-grade Python script that automates the process of scraping your order history from [Blinkit](https://blinkit.com). The script uses modern, robust automation techniques to handle complex login flows, dynamic content, and session management, saving the cleaned data to a user-friendly Excel file.
 
-This README serves as both a user guide for the script and a project plan (PRD) for its development.
+This README serves as a comprehensive guide for using and understanding the script.
 
-## Features
+## Key Features
 
--   Automated login to Blinkit using a phone number.
--   Handles 2FA by prompting the user to enter the OTP from their phone.
--   Navigates to the order history page.
--   Scrolls automatically to load all orders for a given month.
--   Scrapes summary data for each order (Date/Time, Total Amount, Delivery Time) directly from the order list page.
--   Saves the scraped data into a simple and clean Excel file (`orders.xlsx`).
+-   **Persistent Login Sessions:** After the first manual login, the script saves your session state to an `auth.json` file. Subsequent runs will use this file to log you in automatically, bypassing the need for OTP entry.
+-   **Forced Re-Login:** Includes a `--relogin` command-line flag to easily delete the saved session and perform a fresh manual login when needed (e.g., if the session expires).
+-   **Interactive Date Input:** Instead of a fixed month, the script prompts you to enter a start date, allowing you to scrape all orders from that date to the present.
+-   **Robust Automation:** Built with asynchronous Playwright (`asyncio`) and modern `expect` waits to handle pop-ups, dynamic content, and infinite scrolling reliably. It uses precise, user-vetted selectors to minimize errors.
+-   **Smart Data Cleaning:** Parses and cleans data at the source (e.g., removing currency symbols, standardizing dates), handles different order statuses (ignoring returns), and uses a unique key to prevent duplicate entries during scraping.
+-   **Clean Excel Export:** Saves the final, cleaned data to a formatted `blinkit_orders_cleaned.xlsx` file, sorted with the newest orders first.
 
 ## Prerequisites
 
-Before you begin, ensure you have the following installed:
-
 -   [Python 3.8+](https://www.python.org/downloads/)
--   [pip](https://pip.pypa.io/en/stable/installation/) (Python package installer)
+-   [pip](https://pip.pypa.io/en/stable/installation/)
 
 ## Installation
 
 1.  **Clone the repository:**
     ```bash
-    # Replace with the actual repository URL when available
     git clone https://github.com/your-username/blinkit-scraper.git
     cd blinkit-scraper
     ```
@@ -42,96 +39,62 @@ Before you begin, ensure you have the following installed:
     .\venv\Scripts\activate
     ```
 
-3.  **Install the required Python libraries from `requirements.txt`:**
+3.  **Install the required Python libraries:**
     ```bash
     pip install -r requirements.txt
     ```
 
-4.  **Install browser binaries for Playwright:**
-    Playwright needs to download browser binaries for automation. This is a one-time setup step.
+4.  **Install Playwright's browser binaries (one-time setup):**
     ```bash
     playwright install
     ```
 
 ## Usage
 
-The script is fully interactive. You do not need to provide any command-line arguments. Simply run the script, and it will prompt you for your phone number and OTP at the appropriate times.
+The script is designed to be run interactively from your terminal. It manages your login session to make repeated use fast and easy.
 
-A browser window will open and you will see the script perform the following steps automatically:
-1.  **Handle Popups:** Close an initial "Continue on web" popup if it appears.
-2.  **Set Location:** Type "nirvana country" into the location search bar and select the correct suggestion for "Sector 50".
-3.  **Initiate Login:** Click the "Login" button on the top right of the homepage.
+### Step 1: First-Time Login
 
-### Running the Script & Providing Input
+The very first time you run the script, you will need to perform a full manual login.
 
-1.  **Execute the script from your terminal:**
+1.  **Run the script:**
     ```bash
     python scraper.py
     ```
-
-2.  **Enter Your Phone Number:** Once the mobile number pop-up is visible in the browser, the script will prompt you in your terminal:
+2.  **Enter Start Date:** The script will first ask for a start date.
     ```
-    Please enter your 10-digit mobile number:
+    👉 Please enter the start date to scrape orders from (YYYY-MM-DD):
     ```
+3.  **Follow Browser Instructions:** A browser window will open. The script will handle pop-ups and set the location automatically.
+4.  **Enter Phone & OTP:** The script will prompt you in the terminal to enter your phone number and then your OTP.
+5.  **Session Saved:** After a successful login, the script will create an `auth.json` file. This file stores your session so you don't have to log in again.
 
-3.  **Enter Your OTP:** After you provide your number, the script will proceed to the OTP screen and prompt you again in the terminal:
+### Step 2: Subsequent Runs
+
+On every subsequent run, the script will automatically use the `auth.json` file to log you in.
+
+1.  **Run the script:**
+    ```bash
+    python scraper.py
     ```
-    Please enter the 4-digit OTP you received:
-    ```
+2.  **Enter Start Date:** Provide the start date for the scrape.
+3.  **Automatic Login:** The script will open the browser and should start from a logged-in state, proceeding directly to the scraping process.
 
-4.  **Scraping Begins:** Once the OTP is verified, the script will take over completely, navigating to your order history, scraping all the data, and saving it to `orders.xlsx`.
+### Forcing a New Login
 
-## Output File (`orders.xlsx`)
+If your saved session expires or you want to use a different account, you can force a new manual login using the `--relogin` flag.
 
-The script generates a simple Excel file with one row for each order placed in August. The structure is as follows:
+```bash
+python scraper.py --relogin
+```
+This command will delete the `auth.json` file before starting, triggering the first-time login workflow again.
 
-| Order Date & Time | Total Amount | Delivery Time (Minutes) |
-|-------------------|--------------|-------------------------|
-| 15 Aug, 10:30 PM  | ₹550.75      | 8                       |
-| 21 Aug, 08:15 AM  | ₹120.00      | 12                      |
-| ...               | ...          | ...                     |
+## Output File (`blinkit_orders_cleaned.xlsx`)
 
----
+The script generates a clean Excel file with one row for each order, sorted with the most recent order first.
 
-## Troubleshooting
-
-### Cloudflare Block: "The page you are trying to access has blocked you"
-
-Some websites, including Blinkit, use security services like Cloudflare to prevent automated scraping. If you run the script and get an error page that mentions you are "blocked," it's because the website has detected the automation.
-
-To avoid this, the script is configured to run in "headful" mode (`headless=False`), which means it opens a visible browser window and performs actions at a slightly slower, more human-like pace. This makes the script much less likely to be detected as a bot.
-
-If you still encounter issues, it's possible the site has updated its security measures further.
-
-## Project Development Plan (PRD)
-
-This section outlines the plan that was followed to build the scraper.
-
-### Core Technologies
-
--   **Language:** Python
--   **Browser Automation:** Playwright
--   **HTML Parsing:** Beautiful Soup
--   **Data Handling:** Pandas
-
-### Development Phases
-
--   **Phase 1: Initial Setup and Login Automation**
-    -   **Status:** ✅ Complete
-    -   **Details:** Set up the project structure with `scraper.py`, `requirements.txt`, and `.gitignore`. Implemented argument parsing for the phone number and the full login flow using Playwright, including handling the OTP prompt.
-
--   **Phase 2: Navigation and Filtering**
-    -   **Status:** ✅ Complete
-    -   **Details:** Added logic to navigate from the main page to the "My Orders" section after login. Implemented an automatic scrolling mechanism to dynamically load the entire order history until orders from the month prior to August were detected.
-
--   **Phase 3: Data Scraping**
-    -   **Status:** ✅ Complete
-    -   **Details:** After loading the page, the script passes the HTML content to Beautiful Soup. It then parses the page to find all order cards, filters for those in August, and loops through each item to extract its name and price.
-
--   **Phase 4: Data Storage and Finalization**
-    -   **Status:** ✅ Complete
-    -   **Details:** The scraped data is collected and stored in a Pandas DataFrame. The DataFrame is then exported to `orders.csv`. The script was finalized with headless mode, robust error handling, and clear user feedback messages.
-
-## License
-
-This project is licensed under the MIT License.
+| Order Date & Time   | Total Amount (₹) | Delivery Time (Minutes) |
+|---------------------|------------------|-------------------------|
+| 2025-08-15 10:30 PM | 550              | 8                       |
+| 2025-08-14 08:15 AM | 120              | 12                      |
+| ...                 | ...              | ...                     |
