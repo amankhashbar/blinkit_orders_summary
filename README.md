@@ -13,7 +13,9 @@ This README serves as a comprehensive guide for using and understanding the scri
 -   **Interactive Date Input:** Instead of a fixed month, the script prompts you to enter a start date, allowing you to scrape all orders from that date to the present.
 -   **Robust Automation:** Built with asynchronous Playwright (`asyncio`) and modern `expect` waits to handle pop-ups, dynamic content, and infinite scrolling reliably. It uses precise, user-vetted selectors to minimize errors.
 -   **Smart Data Cleaning:** Parses and cleans data at the source (e.g., removing currency symbols, standardizing dates), handles different order statuses (ignoring returns), and uses a unique key to prevent duplicate entries during scraping.
--   **Clean Excel Export:** Saves the final, cleaned data to a formatted `blinkit_orders_cleaned.xlsx` file, sorted with the newest orders first.
+-   **Two-Sheet Excel Export:** Saves the final, cleaned data to a formatted `blinkit_orders_detailed.xlsx` file. The file contains two separate sheets for easy analysis:
+    -   `Orders Summary`: One row per order with summary details (Order ID, Total Bill, Delivery Time, etc.).
+    -   `Order Items`: A detailed list of every single item from all scraped orders, linked by Order ID.
 
 ## Prerequisites
 
@@ -89,12 +91,25 @@ python scraper.py --relogin
 ```
 This command will delete the `auth.json` file before starting, triggering the first-time login workflow again.
 
-## Output File (`blinkit_orders_cleaned.xlsx`)
+## Output File (`blinkit_orders_detailed.xlsx`)
 
-The script generates a clean Excel file with one row for each order, sorted with the most recent order first.
+The script generates a detailed Excel file with two sheets, providing a comprehensive view of your order history.
 
-| Order Date & Time   | Total Amount (₹) | Delivery Time (Minutes) |
-|---------------------|------------------|-------------------------|
-| 2025-08-15 10:30 PM | 550              | 8                       |
-| 2025-08-14 08:15 AM | 120              | 12                      |
-| ...                 | ...              | ...                     |
+### Sheet 1: `Orders Summary`
+
+This sheet provides one row for each order, with key details summarized.
+
+| Order ID | Order Date & Time | Bill Total (₹) | Delivery Time (Minutes) | ... |
+|---|---|---|---|---|
+| ORD12345 | 2025-08-15 10:30 PM | 550 | 8 | ... |
+| ORD67890 | 2025-08-14 08:15 AM | 120 | 12 | ... |
+
+### Sheet 2: `Order Items`
+
+This sheet provides a detailed, itemized list of every product from every scraped order, linked back to the summary via the `Order ID`.
+
+| Order ID | Product Name | Product Variant / Quantity | Item Price (₹) |
+|---|---|---|---|
+| ORD12345 | Whole Wheat Bread | 1 unit | 50 |
+| ORD12345 | Salted Butter | 100 g | 60 |
+| ORD67890 | Instant Coffee | 50g | 120 |

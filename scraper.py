@@ -67,8 +67,11 @@ async def set_location_and_login_prep(page: Page):
         # To confirm the location was set successfully, we wait for the 'Login' button
         # to become visible on the now-accessible homepage.
         print("LOG: Waiting for page to refresh and 'Login' button to appear...")
-        # `get_by_text` is a robust locator that finds elements by their visible text,
-        # regardless of the underlying HTML tag (e.g., <button> or <div>).
+
+        # A hard wait is added here to ensure the page has time to reload after location selection.
+        # This prevents a race condition where the script looks for the Login button too quickly.
+        await page.wait_for_timeout(2000)
+
         login_button = page.get_by_text("Login", exact=True)
         await expect(login_button).to_be_visible(timeout=15000)
         print("LOG: Login button is visible. Ready for the login flow.")
@@ -89,7 +92,12 @@ async def login_to_blinkit(page: Page):
         await login_button.click()
         print("LOG: Login button clicked.")
 
-        # Wait for the phone number input to be visible before prompting the user.
+        # A deliberate pause prevents a race condition by waiting for the phone number
+        # modal to finish animating and become interactive before proceeding.
+        print("LOG: Pausing for 1.5s to allow login modal to render...")
+        await page.wait_for_timeout(1500)
+
+        # Now, it is safe to look for the mobile input field.
         mobile_input = page.locator('[data-test-id="phone-no-text-box"]')
         await expect(mobile_input).to_be_visible(timeout=10000)
         print("LOG: Mobile number pop-up is visible.")
@@ -103,7 +111,12 @@ async def login_to_blinkit(page: Page):
         await page.locator('button:has-text("Continue")').click()
         print("LOG: Continue button clicked.")
 
-        # --- START: Modified OTP logic with resend functionality ---
+        # Another pause waits for the UI to transition from the phone number screen to the OTP screen.
+        print("LOG: Pausing for 1.5s to allow OTP modal to render...")
+        await page.wait_for_timeout(1500)
+
+        # The OTP entry is wrapped in a loop to allow for multiple attempts,
+        # making the script resilient to delayed SMS messages or user typos.
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             print(f"\n--- OTP Attempt {attempt}/{max_attempts} ---")
@@ -113,49 +126,47 @@ async def login_to_blinkit(page: Page):
             otp = input("👉 Please enter the 4-digit OTP you received: ")
             if len(otp) != 4 or not otp.isdigit():
                 print("❌ Invalid OTP format. The attempt will likely fail.")
-                # Allow the script to proceed and fail, so the user is prompted to resend.
 
-            # This website uses input fields that automatically advance focus after each
-            # digit is typed. We simulate individual key presses.
             first_otp_input = page.locator('[data-test-id="otp-text-box"]').first
-            await first_otp_input.click() # Focus the first box
+            await first_otp_input.click()
 
-            # On retries, clear any previously entered incorrect OTP
+            # On retries, the input field must be cleared of the previous incorrect OTP.
             if attempt > 1:
-                # This simulates Ctrl+A (or Cmd+A on Mac) and Backspace to clear the field
                 select_all = "Meta+A" if sys.platform == "darwin" else "Control+A"
                 await page.keyboard.press(select_all)
                 await page.keyboard.press("Backspace")
 
+            # Simulate typing each digit individually to work with auto-advancing input fields.
             print(f"LOG: Entering OTP '{otp}' digit by digit...")
             for digit in otp:
                 await page.keyboard.press(digit)
-                await page.wait_for_timeout(100) # A small delay can improve reliability.
+                await page.wait_for_timeout(100)
             print("LOG: Full OTP has been entered.")
 
-            # Check for login success by looking for the 'Account' button.
             try:
                 print("LOG: Waiting for final login confirmation...")
                 account_button = page.get_by_text("Account", exact=True)
-                await expect(account_button).to_be_visible(timeout=15000)
+                # Increased timeout for slow logins, giving the backend more time to process the OTP.
+                await expect(account_button).to_be_visible(timeout=20000)
 
                 print("\n✅ LOGIN SUCCESSFUL!")
                 print("   The 'Account' button is visible. We are ready to start scraping!")
-                return  # Successfully logged in, exit the function.
+                return # Exit the function on successful login.
 
             except TimeoutError:
                 print("\nLOG: Login did not complete successfully. OTP may be incorrect or expired.")
                 if attempt < max_attempts:
                     try:
-                        # Check if the "Resend Code" button is visible
+                        # If login fails, check if the "Resend Code" button is available.
                         resend_button = page.get_by_text("Resend Code", exact=True)
                         await expect(resend_button).to_be_visible(timeout=5000)
-
                         user_choice = input("👉 Would you like to resend the OTP? (y/n): ").lower()
                         if user_choice == 'y':
                             await resend_button.click()
                             print("LOG: 'Resend Code' clicked. A new OTP will be sent.")
-                            continue # Continue to the next iteration of the loop
+                            # Add a small pause after clicking resend to allow UI to update.
+                            await page.wait_for_timeout(1000)
+                            continue # Continue to the next iteration of the loop.
                         else:
                             raise Exception("User aborted the login process.")
                     except TimeoutError:
@@ -164,7 +175,6 @@ async def login_to_blinkit(page: Page):
                     print("\n❌ Maximum OTP attempts reached.")
 
         raise Exception("Failed to log in after multiple OTP attempts.")
-        # --- END: Modified OTP logic ---
 
     except TimeoutError as e:
         print(f"\nCRITICAL ERROR: A timeout occurred during the login process. Error: {e}")
@@ -173,7 +183,6 @@ async def login_to_blinkit(page: Page):
         print(f"\nINPUT ERROR: {e}")
         raise
     except Exception as e:
-        # Catch exceptions raised from within the OTP loop (e.g., user abort)
         print(f"\n❌ An error occurred during login: {e}")
         raise
 
@@ -181,36 +190,49 @@ async def login_to_blinkit(page: Page):
 # --- DATA PARSING AND SCRAPING FUNCTIONS ---
 # ==============================================================================
 
-def parse_order_date(date_str: str) -> datetime:
+def parse_order_date(date_str: str, previous_date: datetime = None) -> datetime:
     """
-    Parses colloquial date/time formats from Blinkit (e.g., "Today, 4:22 pm")
-    into a standard datetime object for precise filtering and sorting.
+    Parses colloquial date/time formats from Blinkit into a standard datetime object.
+
+    It intelligently handles year rollovers. If it parses a date that appears
+    to be *newer* than the previously scraped date (e.g., parsing "Jan 2025" after
+    "Dec 2024"), it correctly assumes the year has decremented.
 
     Args:
         date_str (str): The date string scraped from the website.
+        previous_date (datetime, optional): The datetime of the previously parsed order.
 
     Returns:
         datetime: A standardized datetime object.
     """
     today = date.today()
     date_str_lower = date_str.lower()
+    parsed_date = None
     try:
         if "today" in date_str_lower:
             time_part = date_str.split(',')[1].strip()
-            return datetime.strptime(f"{today.strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %I:%M %p")
-        if "yesterday" in date_str_lower:
+            parsed_date = datetime.strptime(f"{today.strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %I:%M %p")
+        elif "yesterday" in date_str_lower:
             yesterday = today - timedelta(days=1)
             time_part = date_str.split(',')[1].strip()
-            return datetime.strptime(f"{yesterday.strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %I:%M %p")
-        full_date_str = f"{date_str} {today.year}"
-        return datetime.strptime(full_date_str, "%d %b, %I:%M %p %Y")
+            parsed_date = datetime.strptime(f"{yesterday.strftime('%Y-%m-%d')} {time_part}", "%Y-%m-%d %I:%M %p")
+        else:
+            # Assume the current year initially for dates like "15 Aug, 10:30 PM".
+            full_date_str = f"{date_str} {today.year}"
+            parsed_date = datetime.strptime(full_date_str, "%d %b, %I:%M %p %Y")
+
+        # If a previous date is known and the new date is newer, it means we've
+        # crossed a year boundary (e.g., from Jan '25 to Dec '24). Decrement the year.
+        if previous_date and parsed_date > previous_date:
+            parsed_date = parsed_date.replace(year=parsed_date.year - 1)
+
+        return parsed_date
     except (ValueError, IndexError):
         return datetime(1900, 1, 1) # Return a sentinel value on failure.
 
 def get_start_date_from_user() -> date:
     """
-    Prompts the user to enter a start date in YYYY-MM-DD format and validates it,
-    looping until a valid date is provided.
+    Prompts the user to enter a start date in YYYY-MM-DD format and validates it.
 
     Returns:
         date: The validated start date from the user.
@@ -224,158 +246,278 @@ def get_start_date_from_user() -> date:
         except ValueError:
             print("\n❌ Invalid format. Please use the YYYY-MM-DD format. Example: 2025-08-01")
 
-async def scrape_orders_since(page: Page, start_date: date) -> list[dict]:
+async def scrape_order_details(page: Page) -> dict:
     """
-    The main scraping engine. Navigates to 'My Orders', scrolls through the history,
-    and scrapes and cleans summary data for all orders placed on or after the `start_date`.
+    Scrapes detailed information from a single order's page using a top-to-bottom strategy.
 
     Args:
-        page (Page): A logged-in Playwright page object.
-        start_date (date): The earliest date for orders to be included.
+        page (Page): The Playwright page object on an order details view.
 
     Returns:
-        list[dict]: A list of dictionaries, each holding cleaned data for one order.
+        dict: A dictionary containing scraped details for one order.
     """
-    print(f"\n--- Starting Order Scraping Process for orders since {start_date.strftime('%Y-%m-%d')} ---")
+    details = {"summary": {}, "items": []}
+    print("      LOG: Now on details page. Waiting for the page to become interactive...")
+    await page.wait_for_load_state('networkidle', timeout=20000)
+    print("      LOG: Network is idle. Beginning top-to-bottom scrape.")
 
+    # --- PHASE A: Scrape the Top of the Page (Order Summary) ---
+    summary_data = details["summary"]
     try:
-        print("LOG: Navigating to the 'My Orders' page...")
-        await page.get_by_text("Account", exact=True).click()
-        # Waiting for the link to have the 'active' class is a reliable way to
-        # confirm that the navigation to the "My Orders" page was successful.
-        active_my_orders_link = page.locator('a.profile-nav__list-item.active:has-text("My Orders")')
-        await page.get_by_text("My Orders", exact=True).click()
-        await expect(active_my_orders_link).to_be_visible(timeout=20000)
-        print("LOG: 'My Orders' page loaded successfully.")
-    except TimeoutError as e:
-        print(f"CRITICAL ERROR: Could not navigate to the 'My Orders' page. Error: {e}")
-        raise
+        print("      LOG: Scraping header details...")
+        await expect(page.get_by_text("Order summary", exact=True)).to_be_visible(timeout=15000)
 
-    all_orders_data = []
-    processed_order_ids = set() # Tracks scraped orders to prevent duplicates during scrolling.
+        # Use regex to match both "item" and "items" for robustness.
+        item_count_locator = page.locator("div.tw-text-400.tw-font-bold", has_text=re.compile(r'item(s)? in this order'))
+        await expect(item_count_locator).to_be_visible(timeout=5000)
+        summary_data['total_item_count'] = await item_count_locator.inner_text()
+        summary_data['arrival_status'] = await page.locator("div:has-text('Order summary') + div").first.inner_text()
+        summary_data['invoice_download_link'] = 'Yes' if await page.locator("button:has-text('Download Invoice')").count() > 0 else 'No'
+        print("      LOG: Successfully scraped header details.")
+    except Exception as e:
+        print(f"      [!] Warning: Could not parse order summary section. Error: {e}")
+
+    # --- PHASE B: Iteratively Scroll to Scrape All Items ---
+    print("      LOG: Beginning iterative scroll to scrape all items...")
+    processed_item_texts = set()
+    while True:
+        visible_items = await page.locator("div.tw-flex-row:has(img):has(div.tw-text-300.tw-font-medium)").all()
+        new_items_found = False
+        for item_element in visible_items:
+            item_id = await item_element.inner_text()
+            if item_id in processed_item_texts:
+                continue
+            new_items_found = True
+            processed_item_texts.add(item_id)
+            try:
+                name = await item_element.locator("div.tw-text-300.tw-font-medium").first.inner_text()
+                quantity = await item_element.locator("div.tw-text-200.tw-font-regular").first.inner_text()
+                price_text = await item_element.locator("div.tw-text-200.tw-font-bold").first.inner_text()
+                details["items"].append({
+                    "product_name": name, "quantity": quantity, "price": int(re.sub(r'[^\d]', '', price_text))
+                })
+            except (TimeoutError, ValueError):
+                continue
+        if not new_items_found:
+            print("      LOG: No new items found on scroll. Item list is complete.")
+            break
+        print(f"      LOG: Scraped {len(details['items'])} items so far. Scrolling down...")
+        await page.keyboard.press("PageDown")
+        await page.wait_for_timeout(1500)
+    print(f"      LOG: Finished scraping all {len(details['items'])} items.")
+
+    # --- PHASE C: Scrape the Bottom of the Page (Bill Details) ---
+    print("      LOG: Scrolling to bottom to find order details...")
+    await page.keyboard.press("End")
+    await page.wait_for_timeout(1500)
+
+    bill_data = details["summary"]
+    try:
+        order_id_locator = page.locator("button:has-text('ORD')")
+        await expect(order_id_locator).to_be_visible(timeout=10000)
+        bill_data['order_id'] = (await order_id_locator.inner_text()).strip()
+        print(f"      LOG: Scraped Order ID: {bill_data['order_id']}")
+
+        async def get_bill_value(label: str) -> str:
+            try:
+                container = page.locator(f"div.tw-flex.tw-w-full.tw-flex-row:has(div:text-is('{label}'))")
+                await container.wait_for(state="visible", timeout=3000)
+                return await container.locator("div").last.inner_text()
+            except TimeoutError:
+                return "0"
+        bill_data['mrp'] = await get_bill_value('MRP')
+        bill_data['product_discount'] = await get_bill_value('Product discount')
+        bill_data['item_total'] = await get_bill_value('Item total')
+        bill_data['handling_charge'] = await get_bill_value('Handling charge')
+        bill_data['delivery_charges'] = await get_bill_value('Delivery charges')
+        bill_data['bill_total'] = await get_bill_value('Bill total')
+        print("      LOG: Bill details scraped successfully.")
+    except Exception as e:
+        print(f"      [!] Warning: Could not parse bill details section. Error: {e}")
+    return details
+
+async def _scrape_all_summaries(page: Page, start_date: date) -> list[dict]:
+    """
+    PHASE 1: Scrolls through the 'My Orders' list and scrapes summary data for all
+    eligible orders, returning a list of dictionaries to be processed in Phase 2.
+    """
+    print("\n--- PHASE 1: Collecting all order summaries ---")
+    summaries_to_process = []
+    processed_unique_ids = set()
     stop_scraping = False
+    last_known_date = None
 
-    print("\nLOG: Beginning scrape and scroll loop...")
     while not stop_scraping:
-        order_cards_locator = page.locator('div.tw-flex.tw-flex-col:has(div.tw-text-500)')
+        order_cards_locator = page.locator('div.tw-flex.tw-flex-col:has(span.icon-right-arrow)')
         try:
             await expect(order_cards_locator.first).to_be_visible(timeout=10000)
         except TimeoutError:
-            print("LOG: No order cards found on the page. Ending scrape.")
+            print("LOG: No order cards found on the page. Ending summary collection.")
             break
-
         for card in await order_cards_locator.all():
             try:
-                # This section applies the specific business logic for data extraction.
-                status_element = card.locator('div.tw-text-500').first
-                status_text = await status_element.inner_text()
-                status_text_lower = status_text.lower()
-
-                # Rule: Ignore any orders that have been returned.
-                if "return completed" in status_text_lower:
-                    print(f"  [-] Ignoring a 'Return completed' card.")
-                    continue
-
-                # Rule: Only process cards that contain transaction details (indicated by a "•" separator).
-                if await card.locator('div:has-text("•")').count() > 0:
-                    details_text = await card.locator('div:has-text("•")').first.inner_text()
-                    # Use regex to extract only the numbers from the amount string.
-                    amount_match = re.search(r'₹([\d,]+)', details_text)
-                    total_amount = int(amount_match.group(1).replace(',', '')) if amount_match else 0
-                    date_str = details_text.split('•')[1].strip()
-                    order_datetime = parse_order_date(date_str)
-                else:
-                    print(f"  [!] Skipping a card with an unknown format. Status: '{status_text}'")
-                    continue
-
-                # Create a stable ID from the cleaned data to prevent duplicate entries.
-                unique_order_id = f"{date_str}-{total_amount}"
-                if unique_order_id in processed_order_ids:
-                    continue
-                processed_order_ids.add(unique_order_id)
-
-                # Stop the entire process if we find an order older than the user's start date.
+                details_locator = card.locator('div:has-text("•")')
+                if await details_locator.count() == 0: continue
+                details_text = await details_locator.first.inner_text()
+                amount_match = re.search(r'₹([\d,]+)', details_text)
+                total_amount_str = amount_match.group(1) if amount_match else "0"
+                total_amount = int(total_amount_str.replace(',', ''))
+                date_str = details_text.split('•')[1].strip()
+                unique_key = f"{date_str}-{total_amount}"
+                if unique_key in processed_unique_ids: continue
+                processed_unique_ids.add(unique_key)
+                order_datetime = parse_order_date(date_str, previous_date=last_known_date)
+                last_known_date = order_datetime
                 if order_datetime.date() < start_date:
-                    print(f"\nLOG: Found an order from {order_datetime.strftime('%d %b')}, which is before the start date. Stopping scrape.")
+                    print(f"\nLOG: Found an order from {order_datetime.strftime('%d %b, %Y')}, which is before the start date. Stopping.")
                     stop_scraping = True
-                    continue
-
-                # Rule: Default delivery time to 0 unless the status explicitly says "Arrived in X mins".
+                    break
+                status_text = await card.locator('div.tw-text-500').first.inner_text()
                 delivery_time_mins = 0
-                if "arrived in" in status_text_lower:
+                if "arrived in" in status_text.lower():
                     delivery_match = re.search(r"(\d+)", status_text)
-                    if delivery_match:
-                        delivery_time_mins = int(delivery_match.group(1))
-
-                print(f"  [+] Scraped Order: Date='{order_datetime.strftime('%Y-%m-%d %H:%M')}', Amount='{total_amount}', Delivery='{delivery_time_mins} mins'")
-                all_orders_data.append({
-                    "order_datetime": order_datetime,
-                    "total_amount": total_amount,
-                    "delivery_time_minutes": delivery_time_mins,
+                    if delivery_match: delivery_time_mins = int(delivery_match.group(1))
+                summaries_to_process.append({
+                    "order_datetime": order_datetime, "bill_total_from_list": total_amount,
+                    "delivery_time_minutes": delivery_time_mins, "unique_amount_str": f"₹{total_amount_str}",
+                    "unique_date_str": date_str,
                 })
-            except (IndexError, TimeoutError, ValueError) as e:
-                print(f"  [!] Skipping a card that could not be parsed. Error: {e}")
+            except Exception as e:
+                print(f"  [!] Warning: Could not parse a summary card. Error: {e}")
                 continue
-
-        if stop_scraping:
-            break
-
-        # This "smart scroll" logic is more reliable than waiting for network idle.
-        # It scrolls and then waits for a new element to appear at the end of the list.
+        if stop_scraping: break
         card_count_before_scroll = await order_cards_locator.count()
-        print(f"\nLOG: Scrolling down from {card_count_before_scroll} visible orders...")
+        print(f"LOG: Scrolling down from {card_count_before_scroll} visible summaries...")
         await page.mouse.wheel(0, 10000)
         try:
             await order_cards_locator.nth(card_count_before_scroll).wait_for(timeout=7000)
-            print(f"LOG: Scroll successful. New order count is {await order_cards_locator.count()}.")
         except TimeoutError:
-            print("\nLOG: Scrolled, but no new orders loaded. Reached the end of the history.")
+            print("\nLOG: Scrolled, but no new summaries loaded. Reached the end of the history.")
             break
+    return summaries_to_process
 
-    return all_orders_data
+async def scrape_orders_since(page: Page, start_date: date) -> tuple[list[dict], list[dict]]:
+    """
+    Orchestrates the two-phase scraping process:
+    1. Scrape all order summaries from the main list.
+    2. Navigate to each order's detail page to scrape full data.
+    """
+    my_orders_url = "https://blinkit.com/account/orders"
+    print(f"\n--- Navigating to 'My Orders' page at {my_orders_url} ---")
+    await page.goto(my_orders_url)
+    active_my_orders_link = page.locator('a.profile-nav__list-item.active:has-text("My Orders")')
+    await expect(active_my_orders_link).to_be_visible(timeout=20000)
+    print("LOG: 'My Orders' page loaded successfully.")
+    orders_to_process = await _scrape_all_summaries(page, start_date)
+    if not orders_to_process: return [], []
+
+    print("\n--- PHASE 1 COMPLETE: The following orders will be processed ---")
+    for order in orders_to_process:
+        print(f"  - Timestamp: {order['order_datetime']}, Amount: ₹{order['bill_total_from_list']}")
+    print("--------------------------------------------------------------------")
+    print("\n--- PHASE 2: Processing each order for detailed information ---")
+    all_final_summaries, all_final_items = [], []
+    for index, summary_data in enumerate(orders_to_process):
+        order_dt = summary_data['order_datetime']
+        print(f"\n[+] Processing Order {index + 1}/{len(orders_to_process)}: Date='{order_dt.strftime('%Y-%m-%d %H:%M')}'")
+        try:
+            if not page.url == my_orders_url:
+                await page.goto(my_orders_url)
+                await expect(active_my_orders_link).to_be_visible(timeout=20000)
+            amount_str, date_str = summary_data['unique_amount_str'], summary_data['unique_date_str']
+            print(f"  LOG: Searching for an order card containing BOTH '{amount_str}' AND '{date_str}'...")
+            order_card = page.locator('div.tw-flex.tw-flex-col').filter(has_text=re.compile(re.escape(amount_str))).filter(has_text=re.compile(re.escape(date_str))).first
+            scroll_attempts, last_height = 0, await page.evaluate("document.body.scrollHeight")
+            while not await order_card.is_visible() and scroll_attempts < 15:
+                print(f"  LOG: Order not visible yet. Scrolling down (Attempt {scroll_attempts + 1})...")
+                await page.keyboard.press("End")
+                await page.wait_for_timeout(2500)
+                new_height = await page.evaluate("document.body.scrollHeight")
+                if new_height == last_height: break
+                last_height = new_height
+                scroll_attempts += 1
+            if not await order_card.is_visible(): raise Exception(f"Could not find the order card after scrolling.")
+            print("  LOG: Found unique order card. Clicking it now...")
+            await order_card.locator('div.tw-flex-row:has(span.icon-right-arrow)').first.click()
+            intermediate_page_locator = page.get_by_text("View Order Details", exact=True)
+            final_page_locator = page.get_by_text("Bill details", exact=True)
+            await expect(intermediate_page_locator.or_(final_page_locator)).to_be_visible(timeout=20000)
+            if await intermediate_page_locator.is_visible():
+                await intermediate_page_locator.click()
+                await expect(final_page_locator).to_be_visible(timeout=15000)
+            detailed_data = await scrape_order_details(page)
+            final_summary = {**summary_data, **detailed_data["summary"]}
+            if final_summary.get('delivery_time_minutes') == 0 and 'arrival_status' in final_summary:
+                try:
+                    arrival_time_match = re.search(r'(\d{1,2}:\d{2}\s*(?:am|pm))', final_summary['arrival_status'], re.IGNORECASE)
+                    if arrival_time_match:
+                        arrival_datetime = datetime.strptime(f"{summary_data['order_datetime'].date()} {arrival_time_match.group(1)}", "%Y-%m-%d %I:%M %p")
+                        if arrival_datetime < summary_data['order_datetime']: arrival_datetime += timedelta(days=1)
+                        final_summary['delivery_time_minutes'] = round((arrival_datetime - summary_data['order_datetime']).total_seconds() / 60)
+                        print(f"      LOG: Calculated delivery time: {final_summary['delivery_time_minutes']} minutes.")
+                except Exception as e: print(f"      [!] Warning: Failed to calculate delivery time. Error: {e}")
+            all_final_summaries.append(final_summary)
+            order_id = final_summary.get("order_id")
+            for item in detailed_data["items"]:
+                item["order_id"] = order_id
+                all_final_items.append(item)
+        except Exception as e:
+            print(f"  [!] CRITICAL FAILURE for order from {order_dt}: {e}")
+            await page.screenshot(path=f"error_order_{order_dt.strftime('%Y%m%d_%H%M%S')}.png")
+            continue
+    return all_final_summaries, all_final_items
 
 # ==============================================================================
 # --- DATA EXPORT AND MAIN WORKFLOW ---
 # ==============================================================================
 
-def export_to_excel(orders_data: list[dict]):
+def export_to_excel(summaries_data: list[dict], items_data: list[dict]):
     """
-    Saves the cleaned data to a formatted Excel file.
-
-    Args:
-        orders_data (list[dict]): The list of scraped order dictionaries.
+    Saves the scraped data to a formatted Excel file with two sheets.
     """
-    if not orders_data:
+    if not summaries_data:
         print("\nNo data was scraped to export.")
         return
-
     print("\n--- Processing data for Excel export ---")
-    df = pd.DataFrame(orders_data)
-
-    # Sort data chronologically with the newest orders first.
-    df.sort_values(by="order_datetime", ascending=False, inplace=True)
-    # Format the datetime into a more readable string for the final Excel file.
-    df['order_datetime'] = df['order_datetime'].dt.strftime('%Y-%m-%d %I:%M %p')
-
-    df.rename(columns={
-        'order_datetime': 'Order Date & Time',
-        'total_amount': 'Total Amount (₹)',
-        'delivery_time_minutes': 'Delivery Time (Minutes)'
+    df_summary = pd.DataFrame(summaries_data)
+    df_summary.sort_values(by="order_datetime", ascending=False, inplace=True)
+    df_summary['order_datetime'] = df_summary['order_datetime'].dt.strftime('%Y-%m-%d %I:%M %p')
+    for col in ['mrp', 'product_discount', 'item_total', 'handling_charge', 'delivery_charges', 'bill_total']:
+        if col in df_summary.columns:
+            df_summary[col] = pd.to_numeric(df_summary[col].astype(str).str.replace(r'[^\d.-]', '', regex=True), errors='coerce').fillna(0)
+    df_summary.rename(columns={
+        'order_id': 'Order ID', 'order_datetime': 'Order Date & Time', 'bill_total': 'Bill Total (₹)',
+        'delivery_time_minutes': 'Delivery Time (Minutes)', 'arrival_status': 'Arrival Status',
+        'total_item_count': 'Total Item Count', 'mrp': 'MRP (₹)', 'product_discount': 'Product Discount (₹)',
+        'item_total': 'Item Sub-Total (₹)', 'handling_charge': 'Handling Charge (₹)',
+        'delivery_charges': 'Delivery Charge (₹)', 'invoice_download_link': 'Invoice Download Link'
     }, inplace=True)
-
-    output_filename = "blinkit_orders_cleaned.xlsx"
+    summary_cols = ['Order ID', 'Order Date & Time', 'Bill Total (₹)', 'Delivery Time (Minutes)', 'Arrival Status',
+                    'Total Item Count', 'MRP (₹)', 'Product Discount (₹)', 'Item Sub-Total (₹)',
+                    'Handling Charge (₹)', 'Delivery Charge (₹)', 'Invoice Download Link']
+    df_summary = df_summary[[col for col in summary_cols if col in df_summary.columns]]
+    df_items = pd.DataFrame(items_data)
+    if not df_items.empty:
+        df_items.rename(columns={
+            'order_id': 'Order ID', 'product_name': 'Product Name',
+            'quantity': 'Product Variant / Quantity', 'price': 'Item Price (₹)'
+        }, inplace=True)
+        items_cols = ['Order ID', 'Product Name', 'Product Variant / Quantity', 'Item Price (₹)']
+        df_items = df_items[[col for col in items_cols if col in df_items.columns]]
+    output_filename = "blinkit_orders_detailed.xlsx"
     try:
-        df.to_excel(output_filename, index=False, engine='openpyxl')
-        print(f"\n✅ Success! Data for {len(df)} orders saved to '{output_filename}'")
+        with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+            df_summary.to_excel(writer, sheet_name='Orders Summary', index=False)
+            if not df_items.empty:
+                df_items.to_excel(writer, sheet_name='Order Items', index=False)
+        print(f"\n✅ Success! Data for {len(df_summary)} orders saved to '{output_filename}'")
+        print(f"   The file contains two sheets: 'Orders Summary' and 'Order Items'.")
     except Exception as e:
         print(f"\n❌ Failed to save Excel file. Error: {e}")
 
 async def main():
     """
     The main function that orchestrates the entire scraping workflow.
-
-    It uses a state-driven approach to determine whether to log in or proceed
-    directly to scraping, making it resilient to expired sessions.
     """
     AUTH_FILE = "auth.json"
     if '--relogin' in sys.argv:
@@ -383,61 +525,46 @@ async def main():
         if os.path.exists(AUTH_FILE):
             os.remove(AUTH_FILE)
             print(f"LOG: Removed existing authentication file: '{AUTH_FILE}'")
-
     start_date = get_start_date_from_user()
-
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=False, slow_mo=50)
         context = await browser.new_context(storage_state=AUTH_FILE if os.path.exists(AUTH_FILE) else None)
         page = await context.new_page()
-
         try:
             print("\n--- Starting Blinkit Scraper ---")
             await page.goto("https://blinkit.com/", timeout=60000)
-
             print("\nLOG: Determining current page state...")
-            # --- REVISED LOGIC ---
-            # The most reliable way to determine the initial state is to check for the
-            # location input box first. Its presence means we must handle location
-            # setting before doing anything else.
-
             location_input = page.locator('input[placeholder="search delivery location"]')
-
-            # STATE 1: First-time run or location needs to be set.
             if await location_input.is_visible(timeout=10000):
-                print("LOG: State detected: Location needs to be set.")
+                print("LOG: State Detected: Location needs to be set.")
                 if os.path.exists(AUTH_FILE):
-                    os.remove(AUTH_FILE) # Remove old auth if we're forced to set location.
-
+                    os.remove(AUTH_FILE)
                 await set_location_and_login_prep(page)
                 await login_to_blinkit(page)
-
-                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
+                print("LOG: Login successful. Pausing for 3 seconds to ensure session is stable...")
+                await page.wait_for_timeout(3000)
+                print(f"LOG: Saving new session to '{AUTH_FILE}' for future runs...")
                 await context.storage_state(path=AUTH_FILE)
                 print("LOG: Session saved.")
-
-            # STATE 2: Location is set, but we are logged out.
             elif await page.get_by_text("Login", exact=True).is_visible():
-                print("LOG: State detected: Location is set, but user is logged out.")
+                print("LOG: State Detected: Location is set, but session is expired.")
                 await login_to_blinkit(page)
-
-                print(f"LOG: Login successful! Saving new session to '{AUTH_FILE}' for future runs...")
+                print("LOG: Login successful. Pausing for 3 seconds to ensure session is stable...")
+                await page.wait_for_timeout(3000)
+                print(f"LOG: Overwriting session file '{AUTH_FILE}' with new login data...")
                 await context.storage_state(path=AUTH_FILE)
                 print("LOG: Session saved.")
-
-            # STATE 3: Already fully logged in.
             elif await page.get_by_text("Account", exact=True).is_visible():
-                print("LOG: State detected: Fully logged in ('Account' button is visible).")
+                print("LOG: State Detected: Fully logged in ('Account' button is visible).")
                 print("LOG: Proceeding directly to scraping.")
-
-            # By this point, the script is guaranteed to be in a logged-in state.
-            all_orders_data = await scrape_orders_since(page, start_date)
-
-            if all_orders_data:
-                export_to_excel(all_orders_data)
+            print("\nLOG: Final check before scraping: Verifying 'Account' button is visible...")
+            await expect(page.get_by_text("Account", exact=True)).to_be_visible(timeout=10000)
+            print("LOG: Verification successful. Proceeding to scrape orders.")
+            all_summaries, all_items = await scrape_orders_since(page, start_date)
+            if all_summaries:
+                export_to_excel(all_summaries, all_items)
             else:
                 print(f"\n--- Scraping finished, but no orders were found on or after {start_date.strftime('%Y-%m-%d')}. ---")
-
         except (TimeoutError, ValueError) as e:
             print(f"\n❌ A critical error occurred: {e}")
             await page.screenshot(path="error.png")
@@ -447,7 +574,6 @@ async def main():
         finally:
             print("\n--- Workflow Complete. Closing browser. ---")
             await browser.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
